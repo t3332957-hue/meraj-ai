@@ -969,8 +969,10 @@ def home():
 
 @app.get("/register")
 def register_page():
+    # Always allow opening the registration page directly.
+    # If an account already exists, show the login page instead of creating another account.
     if read_account():
-        return redirect(url_for("login_page"))
+        return auth_page("login")
     return auth_page("register")
 
 
@@ -997,8 +999,8 @@ def register_submit():
 
 @app.get("/login")
 def login_page():
-    if not read_account():
-        return redirect(url_for("register_page"))
+    # Never redirect /login back to /register just because the account file
+    # is temporarily unavailable (for example after a Render restart).
     if session.get("authenticated"):
         return redirect(url_for("home"))
     return auth_page("login")
@@ -1007,9 +1009,9 @@ def login_page():
 @app.post("/login")
 def login_submit():
     account = read_account()
-    if not account:
-        return redirect(url_for("register_page"))
     password = request.form.get("password") or ""
+    if not account:
+        return auth_page("login", "حسابی روی این سرور پیدا نشد. اگر سرویس Render ری‌استارت شده، باید دوباره ثبت‌نام کنی.")
     if not check_password_hash(account.get("password_hash", ""), password):
         return auth_page("login", "رمز عبور اشتباه است.")
     session.clear()
