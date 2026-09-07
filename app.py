@@ -12,12 +12,15 @@ import sys
 from urllib.parse import quote, quote_plus, urlparse, parse_qs, unquote
 
 import requests
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, session, redirect, url_for
+from functools import wraps
+from werkzeug.security import generate_password_hash, check_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 DATA_DIR = BASE_DIR / "data"
 HISTORY_FILE = DATA_DIR / "chats.json"
+ACCOUNT_FILE = DATA_DIR / "account.json"
 UPLOAD_DIR.mkdir(exist_ok=True)
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -36,7 +39,80 @@ FILES_DIR.mkdir(exist_ok=True)
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 app.config["JSON_AS_ASCII"] = False
+app.config["SECRET_KEY"] = os.environ.get("MERAJ_SECRET_KEY", "") or uuid.uuid4().hex + uuid.uuid4().hex
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
+
+
+def read_account():
+    if not ACCOUNT_FILE.exists():
+        return None
+    try:
+        data = json.loads(ACCOUNT_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) and data.get("username") and data.get("password_hash") else None
+    except Exception as e:
+        print("[ACCOUNT READ ERROR]", repr(e))
+        return None
+
+
+def write_account(username, password):
+    ACCOUNT_FILE.write_text(
+        json.dumps({
+            "username": username,
+            "password_hash": generate_password_hash(password),
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("authenticated"):
+            if request.path.startswith("/api/") or request.path.startswith("/generated"):
+                return jsonify(error="نیاز به ورود دارید.", login_required=True), 401
+            return redirect(url_for("login_page"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def auth_page(mode="login", error=""):
+    account_exists = read_account() is not None
+    if mode == "register" and account_exists:
+        mode = "login"
+    title = "ثبت‌نام | معراج بات" if mode == "register" else "ورود | معراج بات"
+    heading = "ساخت حساب" if mode == "register" else "ورود به معراج بات"
+    error_html = f'<div class="err">{error}</div>' if error else ""
+    if mode == "register":
+        body = """
+        <form method="post" action="/register" class="auth-form">
+          <label>نام کاربری</label>
+          <input name="username" autocomplete="username" maxlength="40" required placeholder="نام کاربری">
+          <label>رمز عبور</label>
+          <input name="password" type="password" autocomplete="new-password" minlength="6" required placeholder="رمز عبور">
+          <label>تکرار رمز عبور</label>
+          <input name="password2" type="password" autocomplete="new-password" minlength="6" required placeholder="تکرار رمز عبور">
+          <button type="submit">ثبت‌نام</button>
+        </form>
+        <p class="switch">حساب داری؟ <a href="/login">ورود</a></p>
+        """
+    else:
+        body = """
+        <form method="post" action="/login" class="auth-form">
+          <label>رمز عبور</label>
+          <input name="password" type="password" autocomplete="current-password" required placeholder="رمز عبور">
+          <button type="submit">ورود</button>
+        </form>
+        """
+        if not account_exists:
+            body += '<p class="switch">هنوز حسابی ساخته نشده؟ <a href="/register">ثبت‌نام</a></p>'
+    return f"""<!doctype html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>{title}</title>
+<style>
+*{{box-sizing:border-box}}html,body{{margin:0;min-height:100%;background:#0b0b0f;color:#f4f4f5;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif}}body{{display:grid;place-items:center;padding:20px}}.card{{width:min(430px,100%);background:#17171c;border:1px solid #30303a;border-radius:22px;padding:28px;box-shadow:0 20px 60px #0008}}h1{{margin:0 0 8px;font-size:27px}}.sub{{color:#a1a1aa;margin:0 0 24px}}.auth-form{{display:grid;gap:10px}}label{{font-size:14px;color:#d4d4d8;margin-top:4px}}input{{width:100%;border:1px solid #383842;background:#0f0f13;color:#fff;border-radius:12px;padding:14px;font:inherit;outline:none}}input:focus{{border-color:#777}}button{{border:0;border-radius:12px;background:#f4f4f5;color:#111;padding:14px;font:inherit;font-weight:700;cursor:pointer;margin-top:8px}}.switch{{text-align:center;color:#a1a1aa;margin:18px 0 0}}a{{color:#fff}}.err{{background:#3a1d22;border:1px solid #6b2d38;color:#ffb4bd;padding:11px 13px;border-radius:12px;margin-bottom:14px}}
+</style></head><body><main class="card"><h1>معراج بات</h1><p class="sub">{heading}</p>{error_html}{body}</main></body></html>"""
 
 def get_models(key):
     r = requests.get(
@@ -694,7 +770,7 @@ textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:whit
 <header class="topbar">
  <div class="top-right"><button class="iconbtn" onclick="toggleSide()">☰</button><div><div class="brand">معراج بات</div><div class="model" id="modelLabel">در حال اتصال...</div></div></div>
  <div class="top-left"><button class="iconbtn" onclick="newChat()">✎</button><button class="iconbtn" onclick="toggleMenu()">⋮</button></div>
- <div class="menu" id="menu"><button onclick="newChat();toggleMenu()">چت جدید</button><button onclick="clearChat();toggleMenu()">پاک کردن این چت</button><button onclick="showAbout();toggleMenu()">درباره</button><button onclick="alert('جستجوی وب برای پرسش‌های خبری و به‌روز به‌صورت خودکار فعال است.')">🌐 جستجوی وب</button></div>
+ <div class="menu" id="menu"><form method="post" action="/logout"><button type="submit">🚪 خروج از حساب</button></form><button onclick="newChat();toggleMenu()">چت جدید</button><button onclick="clearChat();toggleMenu()">پاک کردن این چت</button><button onclick="showAbout();toggleMenu()">درباره</button><button onclick="alert('جستجوی وب برای پرسش‌های خبری و به‌روز به‌صورت خودکار فعال است.')">🌐 جستجوی وب</button></div>
 </header>
 <section class="messages" id="messages"><div class="empty"><div><h1>معراج بات</h1><p>هر چیزی می‌خواهی بنویس…</p></div></div></section>
 <div class="composer-wrap">
@@ -744,7 +820,7 @@ function render(){const box=document.getElementById('messages');if(!messages.len
 function copyMsg(i,btn){const text=messages[i]?.content||'';const done=()=>{if(btn){const old=btn.textContent;btn.textContent='کپی شد ✓';setTimeout(()=>btn.textContent=old,1200)}};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done).catch(()=>{fallbackCopy(text);done()})}else{fallbackCopy(text);done()}}
 function fallbackCopy(text){const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}
 async function shareMsg(i){const text=messages[i]?.content||'';if(navigator.share){try{await navigator.share({title:'معراج بات',text:text});return}catch(e){}}fallbackCopy(text);alert('متن پاسخ کپی شد؛ حالا می‌توانی آن را در هر برنامه‌ای به اشتراک بگذاری.')}
-function setBusy(v){busy=v;document.getElementById('send').disabled=false;document.getElementById('mic').disabled=v;document.getElementById('cancelBtn').classList.toggle('show',v);if(!v)document.getElementById('status').textContent='آماده';}
+function setBusy(v){busy=v;document.getElementById('send').disabled=v;document.getElementById('mic').disabled=v;document.getElementById('cancelBtn').classList.toggle('show',v);if(!v)document.getElementById('status').textContent='آماده';}
 async function saveLocalState(){try{if(messages.length) localStorage.setItem('meraj_last_chat',JSON.stringify({id:currentChatId,messages}));}catch(e){}}
 async function sendMessage(){
  if(busy)return;
@@ -768,14 +844,21 @@ async function sendMessage(){
   const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:currentChatId,messages}),signal:activeController.signal});
   const data=await r.json();if(!r.ok)throw new Error(data.error||'خطای سرور');
   currentChatId=data.chat_id||currentChatId;addMessage('assistant',data.reply||'پاسخی دریافت نشد.',{sources:data.sources||[],file_url:data.file_url||'',file_name:data.file_name||''});
-  document.getElementById('modelLabel').textContent=data.model||'';await loadHistory();await saveLocalState();
+  document.getElementById('modelLabel').textContent=data.model||'';
+  // History/local persistence are background tasks. They must never keep the composer locked.
+  setBusy(false);
+  loadHistory().catch(()=>{}); saveLocalState().catch(()=>{});
  }catch(e){if(e.name==='AbortError')addMessage('assistant','⏱️ پاسخ طول کشید و متوقف شد. دوباره ارسال کن.');else addMessage('assistant','❌ '+e.message)}
  finally{clearTimeout(timer);activeController=null;setBusy(false);input.focus()}
 }
 async function generateImage(){
  if(busy)return;const p=document.getElementById('imagePrompt').value.trim();if(!p){document.getElementById('status').textContent='توضیح تصویر را بنویس.';return}
  setBusy(true);document.getElementById('status').textContent='🎨 در حال ساخت تصویر…';activeController=new AbortController();const timer=setTimeout(()=>activeController&&activeController.abort(),60000);
- try{const r=await fetch('/api/generate-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p}),signal:activeController.signal});const d=await r.json();if(!r.ok)throw new Error(d.error||'ساخت تصویر ناموفق بود');messages.push({role:'assistant',content:'تصویر ساخته شد\n\nپرامپت: '+p,image_url:d.url,image_prompt:p,sources:[]});render();document.getElementById('imagePrompt').value='';toggleImagePanel();if(!currentChatId)currentChatId=crypto.randomUUID?crypto.randomUUID():String(Date.now());await fetch('/api/save-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:currentChatId,messages})}).catch(()=>{});await loadHistory();
+ try{const r=await fetch('/api/generate-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p}),signal:activeController.signal});const d=await r.json();if(!r.ok)throw new Error(d.error||'ساخت تصویر ناموفق بود');messages.push({role:'assistant',content:'تصویر ساخته شد\n\nپرامپت: '+p,image_url:d.url,image_prompt:p,sources:[]});render();document.getElementById('imagePrompt').value='';toggleImagePanel();if(!currentChatId)currentChatId=crypto.randomUUID?crypto.randomUUID():String(Date.now());
+  // Release the composer immediately after the image is ready. Saving/history are non-blocking.
+  setBusy(false);
+  fetch('/api/save-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:currentChatId,messages})}).catch(()=>{});
+  loadHistory().catch(()=>{});
  }catch(e){document.getElementById('status').textContent=e.name==='AbortError'?'ساخت تصویر زمان زیادی برد. دوباره امتحان کن.':'خطا در ساخت تصویر: '+e.message}
  finally{clearTimeout(timer);activeController=null;setBusy(false);input.focus()}
 }
@@ -888,7 +971,67 @@ loadInfo();loadHistory();
 
 @app.get("/")
 def home():
+    if not read_account():
+        return redirect(url_for("register_page"))
+    if not session.get("authenticated"):
+        return redirect(url_for("login_page"))
     return HTML_PAGE
+
+
+@app.get("/register")
+def register_page():
+    if read_account():
+        return redirect(url_for("login_page"))
+    return auth_page("register")
+
+
+@app.post("/register")
+def register_submit():
+    if read_account():
+        return redirect(url_for("login_page"))
+    username = (request.form.get("username") or "").strip()
+    password = request.form.get("password") or ""
+    password2 = request.form.get("password2") or ""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,40}", username):
+        return auth_page("register", "نام کاربری باید ۳ تا ۴۰ کاراکتر و فقط شامل حروف انگلیسی، عدد، نقطه، خط تیره یا زیرخط باشد.")
+    if len(password) < 6:
+        return auth_page("register", "رمز عبور باید حداقل ۶ کاراکتر باشد.")
+    if password != password2:
+        return auth_page("register", "تکرار رمز عبور یکسان نیست.")
+    try:
+        write_account(username, password)
+    except Exception as e:
+        print("[ACCOUNT WRITE ERROR]", repr(e))
+        return auth_page("register", "ساخت حساب انجام نشد. دوباره تلاش کن.")
+    return redirect(url_for("login_page"))
+
+
+@app.get("/login")
+def login_page():
+    if not read_account():
+        return redirect(url_for("register_page"))
+    if session.get("authenticated"):
+        return redirect(url_for("home"))
+    return auth_page("login")
+
+
+@app.post("/login")
+def login_submit():
+    account = read_account()
+    if not account:
+        return redirect(url_for("register_page"))
+    password = request.form.get("password") or ""
+    if not check_password_hash(account.get("password_hash", ""), password):
+        return auth_page("login", "رمز عبور اشتباه است.")
+    session.clear()
+    session["authenticated"] = True
+    return redirect(url_for("home"))
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login_page"))
 
 
 @app.get("/health")
@@ -897,11 +1040,13 @@ def health():
 
 
 @app.get("/api/info")
+@login_required
 def info():
     return jsonify(ok=True, model=MODEL, vision_model=VISION_MODEL, transcription_model=TRANSCRIBE_MODEL, image_generation=IMAGE_GEN_PROVIDER)
 
 
 @app.get("/api/chats")
+@login_required
 def list_chats():
     data = read_history()
     chats = []
@@ -916,6 +1061,7 @@ def list_chats():
 
 
 @app.get("/api/chats/<chat_id>")
+@login_required
 def get_chat(chat_id):
     data = read_history()
     chat = data.get(chat_id)
@@ -929,6 +1075,7 @@ def get_chat(chat_id):
 
 
 @app.delete("/api/chats/<chat_id>")
+@login_required
 def delete_chat(chat_id):
     data = read_history()
     if chat_id in data:
@@ -938,6 +1085,7 @@ def delete_chat(chat_id):
 
 
 @app.post("/api/chat")
+@login_required
 def chat():
     data = request.get_json(silent=True) or {}
     messages = data.get("messages") or []
@@ -987,6 +1135,7 @@ def chat():
 
 
 @app.post("/api/upload")
+@login_required
 def upload():
     f = request.files.get("file")
     if not f or not f.filename:
@@ -1003,11 +1152,13 @@ def upload():
 
 
 @app.get("/generated/<path:filename>")
+@login_required
 def generated_file(filename):
     return send_from_directory(GENERATED_DIR, filename)
 
 
 @app.get("/generated-download/<path:filename>")
+@login_required
 def generated_download(filename):
     # Force a real file download on Android/mobile browsers.
     safe = (GENERATED_DIR / filename).resolve()
@@ -1021,6 +1172,7 @@ def generated_download(filename):
 
 
 @app.get("/generated-download-file/<path:filename>")
+@login_required
 def generated_download_file(filename):
     safe = (FILES_DIR / filename).resolve()
     try:
@@ -1033,6 +1185,7 @@ def generated_download_file(filename):
 
 
 @app.post("/api/generate-image")
+@login_required
 def generate_image():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
@@ -1054,6 +1207,7 @@ def generate_image():
 
 
 @app.post("/api/save-image")
+@login_required
 def save_generated_image():
     data = request.get_json(silent=True) or {}
     chat_id = data.get("chat_id") or str(uuid.uuid4())
@@ -1068,6 +1222,7 @@ def save_generated_image():
 
 
 @app.post("/api/transcribe")
+@login_required
 def transcribe():
     f = request.files.get("audio")
     if not f or not f.filename:
