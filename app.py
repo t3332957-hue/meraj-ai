@@ -788,86 +788,75 @@ textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:whit
 </main>
 </div>
 <script>
-let messages=[],busy=false,currentChatId=null,mediaRecorder=null,audioChunks=[],recording=false,activeController=null;
+let messages=[],chatBusy=false,imageBusy=false,currentChatId=null,mediaRecorder=null,audioChunks=[],recording=false,chatController=null;
 const input=document.getElementById('input');
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,160)+'px'});
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
 function toggleSide(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('overlay').classList.toggle('open')}
 function toggleMenu(){document.getElementById('menu').classList.toggle('open')}
 function toggleImagePanel(){const p=document.getElementById('imagePanel');const b=document.getElementById('imageGenBtn');p.classList.toggle('open');b.classList.toggle('active');if(p.classList.contains('open'))document.getElementById('imagePrompt').focus()}
-function cancelRequest(){if(activeController){activeController.abort();document.getElementById('status').textContent='درخواست متوقف شد';}}
-function newChat(){messages=[];currentChatId=null;render();input.value='';document.getElementById('file').value='';document.getElementById('filePill').textContent='';input.focus();document.getElementById('status').textContent='چت جدید';loadHistory()}
-function clearChat(){if(!currentChatId){newChat();return} fetch('/api/chats/'+currentChatId,{method:'DELETE'}).finally(()=>newChat())}
-function showAbout(){alert('معراج بات\nچت، تاریخچه دائمی، فایل و تبدیل صدا به متن')}
-function filePicked(el){if(el.files.length){document.getElementById('filePill').textContent='📎 '+el.files[0].name;document.getElementById('status').textContent='فایل آماده ارسال است'}}
-function addMessage(role,text,extra={}){messages.push({role,content:text,...extra});render()}
-function escapeHtml(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;')}
-function renderRichText(text,bubble){
- const raw=String(text??'');const re=/```([^\n`]*)\n([\s\S]*?)```/g;let last=0,m;
- while((m=re.exec(raw))){
-  const before=raw.slice(last,m.index);if(before){const div=document.createElement('div');div.innerHTML=escapeHtml(before).replace(/\n/g,'<br>');bubble.appendChild(div)}
-  const pre=document.createElement('pre');pre.className='code-block';
-  const head=document.createElement('div');head.className='code-head';
-  const lang=document.createElement('span');lang.textContent=(m[1]||'code').trim()||'code';
-  const btn=document.createElement('button');btn.className='code-copy';btn.type='button';btn.textContent='کپی کد';btn.addEventListener('click',()=>copyCodeBlock(m[2],btn));
-  head.appendChild(lang);head.appendChild(btn);pre.appendChild(head);
-  const code=document.createElement('code');code.textContent=m[2].replace(/\n$/,'');pre.appendChild(code);bubble.appendChild(pre);last=re.lastIndex;
- }
- const after=raw.slice(last);if(after){const div=document.createElement('div');div.innerHTML=escapeHtml(after).replace(/\n/g,'<br>');bubble.appendChild(div)}
-}
-function copyCodeBlock(code,btn){const done=()=>{const old=btn.textContent;btn.textContent='کپی شد ✓';setTimeout(()=>btn.textContent=old,1200)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(code).then(done).catch(()=>{fallbackCopy(code);done()})}else{fallbackCopy(code);done()}}
-function render(){const box=document.getElementById('messages');if(!messages.length){box.innerHTML='<div class="empty"><div><h1>معراج بات</h1><p>هر چیزی می‌خواهی بنویس…</p></div></div>';return}box.innerHTML='';messages.forEach((m,idx)=>{const row=document.createElement('div');row.className='msg '+m.role;row.innerHTML='<div class="avatar">'+(m.role==='user'?'شما':'م')+'</div><div class="bubble"></div>';const bubble=row.querySelector('.bubble');renderRichText(m.content,bubble);if(m.image_url){const img=document.createElement('img');img.className='generated-image';img.src=m.image_url;img.alt='تصویر';img.loading='lazy';bubble.appendChild(img);const tools=document.createElement('div');tools.className='image-tools';const dl=document.createElement('a');dl.className='msg-action image-download';dl.textContent='⬇️ دانلود تصویر';let downloadUrl=m.image_url;if(typeof downloadUrl==='string'&&downloadUrl.startsWith('/generated/'))downloadUrl='/generated-download/'+downloadUrl.substring('/generated/'.length);dl.href=downloadUrl;dl.setAttribute('download','meraj-image.png');tools.appendChild(dl);bubble.appendChild(tools);const cap=document.createElement('div');cap.className='image-caption';cap.textContent='تصویر آماده است';bubble.appendChild(cap)}if(m.file_url){const tools=document.createElement('div');tools.className='file-tools';const dl=document.createElement('a');dl.className='msg-action file-download';dl.textContent='📁 دریافت فایل'+(m.file_name?' — '+m.file_name:'');dl.href=m.file_url;dl.setAttribute('download',m.file_name||'meraj-file');tools.appendChild(dl);bubble.appendChild(tools)}if(m.role==='assistant'){const actions=document.createElement('div');actions.className='msg-actions';actions.innerHTML='<button class="msg-action" onclick="copyMsg('+idx+',this)">کپی</button><button class="msg-action" onclick="shareMsg('+idx+')">اشتراک‌گذاری</button>';bubble.appendChild(actions);if(Array.isArray(m.sources)&&m.sources.length){const web=document.createElement('div');web.className='sources';web.innerHTML='<div class="web-badge">🌐 منابع وب</div><div class="sources-title">منابع استفاده‌شده:</div>';m.sources.forEach((src,i)=>{const a=document.createElement('a');a.className='source-link';a.href=src.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='['+(i+1)+'] '+src.title;web.appendChild(a)});bubble.appendChild(web)}}box.appendChild(row)});box.scrollTop=box.scrollHeight}
-function copyMsg(i,btn){const text=messages[i]?.content||'';const done=()=>{if(btn){const old=btn.textContent;btn.textContent='کپی شد ✓';setTimeout(()=>btn.textContent=old,1200)}};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done).catch(()=>{fallbackCopy(text);done()})}else{fallbackCopy(text);done()}}
-function fallbackCopy(text){const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}
-async function shareMsg(i){const text=messages[i]?.content||'';if(navigator.share){try{await navigator.share({title:'معراج بات',text:text});return}catch(e){}}fallbackCopy(text);alert('متن پاسخ کپی شد؛ حالا می‌توانی آن را در هر برنامه‌ای به اشتراک بگذاری.')}
-function setBusy(v){busy=v;document.getElementById('send').disabled=v;document.getElementById('mic').disabled=v;document.getElementById('cancelBtn').classList.toggle('show',v);if(!v)document.getElementById('status').textContent='آماده';}
+function cancelRequest(){if(chatController){chatController.abort();document.getElementById('status').textContent='درخواست متوقف شد';}}
+function setChatBusy(v){chatBusy=v;document.getElementById('send').disabled=v;document.getElementById('mic').disabled=v;document.getElementById('cancelBtn').classList.toggle('show',v);if(!v&&!imageBusy)document.getElementById('status').textContent='آماده';}
+function setImageBusy(v){imageBusy=v;const panel=document.getElementById('imagePanel');if(panel){const btn=panel.querySelector('button');if(btn)btn.disabled=v;}if(!v&&!chatBusy)document.getElementById('status').textContent='آماده';}
 async function saveLocalState(){try{if(messages.length) localStorage.setItem('meraj_last_chat',JSON.stringify({id:currentChatId,messages}));}catch(e){}}
 async function sendMessage(){
- if(busy)return;
+ if(chatBusy)return;
  const text=input.value.trim();
  const file=document.getElementById('file').files[0];
  if(!text && !file)return;
- setBusy(true);
+ setChatBusy(true);
  let shownText=text;
- activeController=new AbortController();
- const timer=setTimeout(()=>activeController&&activeController.abort(),90000);
+ chatController=new AbortController();
+ const controller=chatController;
+ const timer=setTimeout(()=>controller.abort(),90000);
  try{
   if(file){
    document.getElementById('status').textContent='در حال خواندن فایل…';
    const fd=new FormData();fd.append('file',file);
-   const ur=await fetch('/api/upload',{method:'POST',body:fd,signal:activeController.signal});
+   const ur=await fetch('/api/upload',{method:'POST',body:fd,signal:controller.signal});
    const ud=await ur.json().catch(()=>({}));if(!ur.ok)throw new Error(ud.error||('خطا در ارسال فایل ('+ur.status+')'));if(!ud.name)throw new Error('سرور فایل را دریافت نکرد. دوباره انتخابش کن.');
    const marker=ud.kind==='image'?'[تصویر پیوست شد: '+ud.name+']':'[فایل پیوست شد: '+ud.name+']';
    shownText=(shownText?shownText+'\n\n':'')+marker;document.getElementById('file').value='';document.getElementById('filePill').textContent='';
   }
   addMessage('user',shownText);input.value='';input.style.height='auto';
-  const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:currentChatId,messages}),signal:activeController.signal});
-  const data=await r.json();if(!r.ok)throw new Error(data.error||'خطای سرور');
+  const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:currentChatId,messages}),signal:controller.signal});
+  const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||'خطای سرور');
   currentChatId=data.chat_id||currentChatId;addMessage('assistant',data.reply||'پاسخی دریافت نشد.',{sources:data.sources||[],file_url:data.file_url||'',file_name:data.file_name||''});
   document.getElementById('modelLabel').textContent=data.model||'';
-  // History/local persistence are background tasks. They must never keep the composer locked.
-  setBusy(false);
-  loadHistory().catch(()=>{}); saveLocalState().catch(()=>{});
- }catch(e){if(e.name==='AbortError')addMessage('assistant','⏱️ پاسخ طول کشید و متوقف شد. دوباره ارسال کن.');else addMessage('assistant','❌ '+e.message)}
- finally{clearTimeout(timer);activeController=null;setBusy(false);input.focus()}
+  // مهم: قفل ارسال همین‌جا آزاد می‌شود؛ ذخیره‌سازی تاریخچه نباید ارسال پیام بعدی را متوقف کند.
+  setChatBusy(false);
+  loadHistory().catch(()=>{});saveLocalState().catch(()=>{});
+ }catch(e){
+  if(e.name==='AbortError')addMessage('assistant','⏱️ پاسخ طول کشید و متوقف شد. دوباره ارسال کن.');
+  else addMessage('assistant','❌ '+e.message);
+ }finally{clearTimeout(timer);if(chatController===controller)chatController=null;setChatBusy(false);input.focus();}
 }
 async function generateImage(){
- if(busy)return;const p=document.getElementById('imagePrompt').value.trim();if(!p){document.getElementById('status').textContent='توضیح تصویر را بنویس.';return}
- setBusy(true);document.getElementById('status').textContent='🎨 در حال ساخت تصویر…';activeController=new AbortController();const timer=setTimeout(()=>activeController&&activeController.abort(),60000);
- try{const r=await fetch('/api/generate-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p}),signal:activeController.signal});const d=await r.json();if(!r.ok)throw new Error(d.error||'ساخت تصویر ناموفق بود');messages.push({role:'assistant',content:'تصویر ساخته شد\n\nپرامپت: '+p,image_url:d.url,image_prompt:p,sources:[]});render();document.getElementById('imagePrompt').value='';toggleImagePanel();if(!currentChatId)currentChatId=crypto.randomUUID?crypto.randomUUID():String(Date.now());
-  // Release the composer immediately after the image is ready. Saving/history are non-blocking.
-  setBusy(false);
+ const p=document.getElementById('imagePrompt').value.trim();
+ if(imageBusy)return;
+ if(!p){document.getElementById('status').textContent='توضیح تصویر را بنویس.';return}
+ setImageBusy(true);document.getElementById('status').textContent='🎨 در حال ساخت تصویر…';
+ const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),60000);
+ try{
+  const r=await fetch('/api/generate-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p}),signal:controller.signal});
+  const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'ساخت تصویر ناموفق بود');
+  messages.push({role:'assistant',content:'تصویر ساخته شد\n\nپرامپت: '+p,image_url:d.url,image_prompt:p,sources:[]});render();
+  document.getElementById('imagePrompt').value='';toggleImagePanel();
+  if(!currentChatId)currentChatId=crypto.randomUUID?crypto.randomUUID():String(Date.now());
+  // تصویر مستقل از چت است؛ بعد از آماده‌شدن تصویر، ارسال پیام متنی همچنان آزاد است.
+  setImageBusy(false);
   fetch('/api/save-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:currentChatId,messages})}).catch(()=>{});
   loadHistory().catch(()=>{});
  }catch(e){document.getElementById('status').textContent=e.name==='AbortError'?'ساخت تصویر زمان زیادی برد. دوباره امتحان کن.':'خطا در ساخت تصویر: '+e.message}
- finally{clearTimeout(timer);activeController=null;setBusy(false);input.focus()}
+ finally{clearTimeout(timer);setImageBusy(false);input.focus();}
 }
 
 async function loadHistory(){
- try{const r=await fetch('/api/chats');const d=await r.json();const h=document.getElementById('history');h.innerHTML='';
-  if(!d.chats.length){h.innerHTML='<div class="history-empty">هنوز چتی ذخیره نشده</div>';return}
+ const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),8000);
+ try{const r=await fetch('/api/chats',{cache:'no-store',signal:controller.signal});const d=await r.json().catch(()=>({chats:[]}));if(!r.ok)throw new Error(d.error||'history');const h=document.getElementById('history');h.innerHTML='';
+  if(!Array.isArray(d.chats)||!d.chats.length){h.innerHTML='<div class="history-empty">هنوز چتی ذخیره نشده</div>';return}
   d.chats.forEach(c=>{const b=document.createElement('button');b.className='history-item'+(c.id===currentChatId?' active':'');b.textContent=c.title||'چت جدید';b.onclick=()=>openChat(c.id);h.appendChild(b)})
- }catch(e){}
+ }catch(e){}finally{clearTimeout(timer)}
 }
 async function openChat(id){
  try{const r=await fetch('/api/chats/'+encodeURIComponent(id));const d=await r.json();if(!r.ok)throw new Error(d.error);currentChatId=id;messages=d.messages||[];render();document.getElementById('status').textContent='ذخیره شد';loadHistory();if(window.innerWidth<900)toggleSide();}
