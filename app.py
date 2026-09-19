@@ -20,7 +20,7 @@ BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 DATA_DIR = BASE_DIR / "data"
 HISTORY_FILE = DATA_DIR / "chats.json"
-ACCOUNT_FILE = DATA_DIR / "account.json"
+ACCOUNT_FILE = DATA_DIR / "accounts.json"
 UPLOAD_DIR.mkdir(exist_ok=True)
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -50,10 +50,17 @@ def read_account():
         return None
     try:
         data = json.loads(ACCOUNT_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) and data.get("username") and data.get("password_hash") else None
+        # accounts.json stores the account(s). Keep backward compatibility with
+        # both a single account object and an {"accounts": [...]} structure.
+        if isinstance(data, dict) and data.get("username") and data.get("password_hash"):
+            return data
+        if isinstance(data, dict) and isinstance(data.get("accounts"), list):
+            for account in data["accounts"]:
+                if isinstance(account, dict) and account.get("username") and account.get("password_hash"):
+                    return account
     except Exception as e:
         print("[ACCOUNT READ ERROR]", repr(e))
-        return None
+    return None
 
 
 def write_account(username, password):
@@ -656,21 +663,30 @@ def generate_image_file(prompt):
     if len(prompt) > 4000:
         prompt = prompt[:4000]
 
-    # Creativity is allowed only in visual execution. The requested nouns,
-    # people, animals, objects and text are a closed set; do not invent new
-    # subjects. This is intentionally explicit because image models otherwise
-    # tend to embellish scenes on their own.
+    # Balanced creativity: preserve the user's idea, while giving the image model freedom to make
+    # the composition, environment and visual storytelling substantially richer.
     strict_prompt = (
-        "Create the image exactly from the user's request. The user's request is the sole authority "
-        "for WHAT appears in the image. Do not invent, add, substitute, or introduce any new subject, "
-        "person, human, animal, character, vehicle, building, object, symbol, logo, prop, or text that "
-        "the user did not request. If the user did not mention a person, do not add a person, face, "
-        "silhouette, crowd, or human figure. If the user did not mention an object, do not add it as a "
-        "subject. If the user requested specific text, preserve the exact wording and do not add extra "
-        "words. You MAY be creative only with artistic execution of the requested elements: composition, "
-        "framing, typography, color harmony, lighting, texture, depth, camera angle, and visual style. "
-        "Do not use creativity to add new subjects. Follow every explicit placement, quantity, color, "
-        "style, and text instruction from the user. User request: " + prompt
+        "Create a polished, high-quality image from the user's request. The user's request is the "
+        "source of truth for the MAIN IDEA, requested subjects, people, objects, symbols, quantities, "
+        "colors, placement and exact text. Preserve those important requirements accurately. "
+        "At the same time, use noticeably stronger artistic creativity than a literal/basic illustration. "
+        "Think like a professional concept artist, photographer and poster designer: creatively improve "
+        "the composition, framing, camera angle, perspective, depth, scale, visual hierarchy, lighting, "
+        "shadows, reflections, atmosphere, color harmony, materials, textures, environmental storytelling "
+        "and overall cinematic quality. Build a rich and believable setting around the requested subject "
+        "when the request leaves room for it. You may add small SUPPORTING environmental details that make "
+        "the scene feel natural and complete, such as appropriate scenery, architecture, weather, clouds, "
+        "mist, particles, light rays, foreground/background layers or tasteful decorative details. "
+        "These additions must support the user's idea rather than replace or contradict it. "
+        "Do not turn a simple request into a different subject or unrelated scene. Do not add a new main "
+        "person, character, animal, vehicle, object, logo or unrelated symbol just because it looks cool. "
+        "Do not invent text. If exact text is requested, reproduce it accurately and keep extra text out. "
+        "If the user specifies a style, follow it; if no style is specified, choose an appropriate, "
+        "visually impressive style yourself. If the request is Islamic, religious, commemorative or about "
+        "a martyr, keep the presentation respectful and dignified while still using rich cinematic lighting, "
+        "strong composition and an appropriate environment. "
+        "Overall rule: be creative about HOW the requested idea is presented, not about changing WHAT the "
+        "user asked for. Make the result feel thoughtfully designed rather than generic. User request: " + prompt
     )
 
     # gptimage is preferred for instruction-following and text/layout work.
@@ -788,86 +804,129 @@ textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:whit
 </main>
 </div>
 <script>
-let messages=[],busy=false,currentChatId=null,mediaRecorder=null,audioChunks=[],recording=false,activeController=null;
+let messages=[],chatBusy=false,imageBusy=false,currentChatId=null,mediaRecorder=null,audioChunks=[],recording=false,chatController=null;
 const input=document.getElementById('input');
+
+function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function addMessage(role,content,meta={}){
+ messages.push({role,content:String(content??''),...(meta||{})});
+ render();
+}
+function renderContent(text){
+ const frag=document.createDocumentFragment();
+ const re=/```([^\\n`]*)\\n([\\s\\S]*?)```/g;
+ let last=0,m;
+ while((m=re.exec(text))){
+  if(m.index>last) frag.appendChild(document.createTextNode(text.slice(last,m.index)));
+  const block=document.createElement('div');block.className='code-block';
+  const head=document.createElement('div');head.className='code-head';
+  const lang=document.createElement('span');lang.textContent=(m[1]||'code').trim()||'code';
+  const cp=document.createElement('button');cp.className='code-copy';cp.textContent='کپی کد';
+  cp.onclick=async()=>{try{await navigator.clipboard.writeText(m[2]);cp.textContent='کپی شد ✓';setTimeout(()=>cp.textContent='کپی کد',1200)}catch(e){cp.textContent='کپی نشد'}};
+  head.append(lang,cp);block.appendChild(head);
+  const code=document.createElement('code');code.textContent=m[2];block.appendChild(code);frag.appendChild(block);last=m.index+m[0].length;
+ }
+ if(last<text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+ return frag;
+}
+function render(){
+ const box=document.getElementById('messages');box.innerHTML='';
+ if(!messages.length){box.innerHTML='<div class="empty"><div><h1>معراج بات</h1><p>هر چیزی می‌خواهی بنویس…</p></div></div>';return;}
+ for(const m of messages){
+  const row=document.createElement('div');row.className='msg '+(m.role==='user'?'user':'assistant');
+  const av=document.createElement('div');av.className='avatar';av.textContent=m.role==='user'?'ش':'م';
+  const wrap=document.createElement('div');wrap.className='bubble';
+  if(m.image_url){
+   if(m.content) wrap.appendChild(renderContent(m.content));
+   const img=document.createElement('img');img.className='generated-image';img.src=m.image_url;img.alt=m.image_prompt||'تصویر ساخته‌شده';img.loading='lazy';wrap.appendChild(img);
+   const tools=document.createElement('div');tools.className='image-tools';
+   const dl=document.createElement('a');dl.className='msg-action image-download';dl.href=m.image_url;dl.download='meraj-generated-image.png';dl.target='_blank';dl.textContent='⬇️ دریافت تصویر';tools.appendChild(dl);
+   const cp=document.createElement('button');cp.className='msg-action';cp.textContent='کپی لینک';cp.onclick=async()=>{try{await navigator.clipboard.writeText(m.image_url);cp.textContent='کپی شد ✓';setTimeout(()=>cp.textContent='کپی لینک',1200)}catch(e){}};tools.appendChild(cp);wrap.appendChild(tools);
+  }else{
+   wrap.appendChild(renderContent(String(m.content||'')));
+  }
+  if(m.file_url){const ft=document.createElement('div');ft.className='file-tools';const a=document.createElement('a');a.className='msg-action file-download';a.href=m.file_url;a.download=m.file_name||'';a.textContent='📁 دریافت فایل'+(m.file_name?' — '+m.file_name:'');ft.appendChild(a);wrap.appendChild(ft);}
+  if(Array.isArray(m.sources)&&m.sources.length){const src=document.createElement('div');src.className='sources';const title=document.createElement('div');title.className='sources-title';title.textContent='منابع وب';src.appendChild(title);m.sources.forEach((x,i)=>{const a=document.createElement('a');a.className='source-link';a.href=x.url||'#';a.target='_blank';a.rel='noopener noreferrer';a.textContent='['+(i+1)+'] '+(x.title||x.url||'منبع');src.appendChild(a)});wrap.appendChild(src);}
+  const actions=document.createElement('div');actions.className='msg-actions';
+  const copy=document.createElement('button');copy.className='msg-action';copy.textContent='کپی';copy.onclick=async()=>{try{await navigator.clipboard.writeText(String(m.content||''));copy.textContent='کپی شد ✓';setTimeout(()=>copy.textContent='کپی',1200)}catch(e){}};
+  const share=document.createElement('button');share.className='msg-action';share.textContent='اشتراک‌گذاری';share.onclick=async()=>{try{if(navigator.share)await navigator.share({text:String(m.content||'')});else await navigator.clipboard.writeText(String(m.content||''));}catch(e){}};
+  actions.append(copy,share);wrap.appendChild(actions);
+  row.append(av,wrap);box.appendChild(row);
+ }
+ box.scrollTop=box.scrollHeight;
+}
+function newChat(){messages=[];currentChatId=null;render();input.value='';document.getElementById('file').value='';document.getElementById('filePill').textContent='';input.focus();document.getElementById('status').textContent='آماده';loadHistory().catch(()=>{});}
+async function clearChat(){if(!currentChatId){newChat();return;}try{await fetch('/api/chats/'+encodeURIComponent(currentChatId),{method:'DELETE'});}catch(e){}newChat();}
+function showAbout(){alert('معراج بات\nدستیار هوش مصنوعی Flask');}
+function filePicked(el){const f=el.files&&el.files[0];document.getElementById('filePill').textContent=f?'📎 '+f.name:'';}
+function setBusy(v){setChatBusy(v);}
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,160)+'px'});
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
 function toggleSide(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('overlay').classList.toggle('open')}
 function toggleMenu(){document.getElementById('menu').classList.toggle('open')}
-function toggleImagePanel(){const p=document.getElementById('imagePanel');const b=document.getElementById('imageGenBtn');p.classList.toggle('open');b.classList.toggle('active');if(p.classList.contains('open'))document.getElementById('imagePrompt').focus()}
-function cancelRequest(){if(activeController){activeController.abort();document.getElementById('status').textContent='درخواست متوقف شد';}}
-function newChat(){messages=[];currentChatId=null;render();input.value='';document.getElementById('file').value='';document.getElementById('filePill').textContent='';input.focus();document.getElementById('status').textContent='چت جدید';loadHistory()}
-function clearChat(){if(!currentChatId){newChat();return} fetch('/api/chats/'+currentChatId,{method:'DELETE'}).finally(()=>newChat())}
-function showAbout(){alert('معراج بات\nچت، تاریخچه دائمی، فایل و تبدیل صدا به متن')}
-function filePicked(el){if(el.files.length){document.getElementById('filePill').textContent='📎 '+el.files[0].name;document.getElementById('status').textContent='فایل آماده ارسال است'}}
-function addMessage(role,text,extra={}){messages.push({role,content:text,...extra});render()}
-function escapeHtml(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;')}
-function renderRichText(text,bubble){
- const raw=String(text??'');const re=/```([^\n`]*)\n([\s\S]*?)```/g;let last=0,m;
- while((m=re.exec(raw))){
-  const before=raw.slice(last,m.index);if(before){const div=document.createElement('div');div.innerHTML=escapeHtml(before).replace(/\n/g,'<br>');bubble.appendChild(div)}
-  const pre=document.createElement('pre');pre.className='code-block';
-  const head=document.createElement('div');head.className='code-head';
-  const lang=document.createElement('span');lang.textContent=(m[1]||'code').trim()||'code';
-  const btn=document.createElement('button');btn.className='code-copy';btn.type='button';btn.textContent='کپی کد';btn.addEventListener('click',()=>copyCodeBlock(m[2],btn));
-  head.appendChild(lang);head.appendChild(btn);pre.appendChild(head);
-  const code=document.createElement('code');code.textContent=m[2].replace(/\n$/,'');pre.appendChild(code);bubble.appendChild(pre);last=re.lastIndex;
- }
- const after=raw.slice(last);if(after){const div=document.createElement('div');div.innerHTML=escapeHtml(after).replace(/\n/g,'<br>');bubble.appendChild(div)}
-}
-function copyCodeBlock(code,btn){const done=()=>{const old=btn.textContent;btn.textContent='کپی شد ✓';setTimeout(()=>btn.textContent=old,1200)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(code).then(done).catch(()=>{fallbackCopy(code);done()})}else{fallbackCopy(code);done()}}
-function render(){const box=document.getElementById('messages');if(!messages.length){box.innerHTML='<div class="empty"><div><h1>معراج بات</h1><p>هر چیزی می‌خواهی بنویس…</p></div></div>';return}box.innerHTML='';messages.forEach((m,idx)=>{const row=document.createElement('div');row.className='msg '+m.role;row.innerHTML='<div class="avatar">'+(m.role==='user'?'شما':'م')+'</div><div class="bubble"></div>';const bubble=row.querySelector('.bubble');renderRichText(m.content,bubble);if(m.image_url){const img=document.createElement('img');img.className='generated-image';img.src=m.image_url;img.alt='تصویر';img.loading='lazy';bubble.appendChild(img);const tools=document.createElement('div');tools.className='image-tools';const dl=document.createElement('a');dl.className='msg-action image-download';dl.textContent='⬇️ دانلود تصویر';let downloadUrl=m.image_url;if(typeof downloadUrl==='string'&&downloadUrl.startsWith('/generated/'))downloadUrl='/generated-download/'+downloadUrl.substring('/generated/'.length);dl.href=downloadUrl;dl.setAttribute('download','meraj-image.png');tools.appendChild(dl);bubble.appendChild(tools);const cap=document.createElement('div');cap.className='image-caption';cap.textContent='تصویر آماده است';bubble.appendChild(cap)}if(m.file_url){const tools=document.createElement('div');tools.className='file-tools';const dl=document.createElement('a');dl.className='msg-action file-download';dl.textContent='📁 دریافت فایل'+(m.file_name?' — '+m.file_name:'');dl.href=m.file_url;dl.setAttribute('download',m.file_name||'meraj-file');tools.appendChild(dl);bubble.appendChild(tools)}if(m.role==='assistant'){const actions=document.createElement('div');actions.className='msg-actions';actions.innerHTML='<button class="msg-action" onclick="copyMsg('+idx+',this)">کپی</button><button class="msg-action" onclick="shareMsg('+idx+')">اشتراک‌گذاری</button>';bubble.appendChild(actions);if(Array.isArray(m.sources)&&m.sources.length){const web=document.createElement('div');web.className='sources';web.innerHTML='<div class="web-badge">🌐 منابع وب</div><div class="sources-title">منابع استفاده‌شده:</div>';m.sources.forEach((src,i)=>{const a=document.createElement('a');a.className='source-link';a.href=src.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='['+(i+1)+'] '+src.title;web.appendChild(a)});bubble.appendChild(web)}}box.appendChild(row)});box.scrollTop=box.scrollHeight}
-function copyMsg(i,btn){const text=messages[i]?.content||'';const done=()=>{if(btn){const old=btn.textContent;btn.textContent='کپی شد ✓';setTimeout(()=>btn.textContent=old,1200)}};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done).catch(()=>{fallbackCopy(text);done()})}else{fallbackCopy(text);done()}}
-function fallbackCopy(text){const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}
-async function shareMsg(i){const text=messages[i]?.content||'';if(navigator.share){try{await navigator.share({title:'معراج بات',text:text});return}catch(e){}}fallbackCopy(text);alert('متن پاسخ کپی شد؛ حالا می‌توانی آن را در هر برنامه‌ای به اشتراک بگذاری.')}
-function setBusy(v){busy=v;document.getElementById('send').disabled=v;document.getElementById('mic').disabled=v;document.getElementById('cancelBtn').classList.toggle('show',v);if(!v)document.getElementById('status').textContent='آماده';}
+function toggleImagePanel(){const p=document.getElementById('imagePanel');const b=document.getElementById('imageGenBtn');if(!p||!b)return; p.classList.toggle('open');b.classList.toggle('active');if(p.classList.contains('open')){const inp=document.getElementById('imagePrompt');if(inp)inp.focus();}}
+function cancelRequest(){if(chatController){chatController.abort();document.getElementById('status').textContent='درخواست متوقف شد';}}
+function setChatBusy(v){chatBusy=v;document.getElementById('send').disabled=v;document.getElementById('mic').disabled=v;document.getElementById('cancelBtn').classList.toggle('show',v);if(!v&&!imageBusy)document.getElementById('status').textContent='آماده';}
+function setImageBusy(v){imageBusy=v;const panel=document.getElementById('imagePanel');if(panel){const btn=panel.querySelector('button');if(btn)btn.disabled=v;}if(!v&&!chatBusy)document.getElementById('status').textContent='آماده';}
 async function saveLocalState(){try{if(messages.length) localStorage.setItem('meraj_last_chat',JSON.stringify({id:currentChatId,messages}));}catch(e){}}
 async function sendMessage(){
- if(busy)return;
+ if(chatBusy)return;
  const text=input.value.trim();
  const file=document.getElementById('file').files[0];
  if(!text && !file)return;
- setBusy(true);
+ setChatBusy(true);
  let shownText=text;
- activeController=new AbortController();
- const timer=setTimeout(()=>activeController&&activeController.abort(),90000);
+ chatController=new AbortController();
+ const controller=chatController;
+ const timer=setTimeout(()=>controller.abort(),90000);
  try{
   if(file){
    document.getElementById('status').textContent='در حال خواندن فایل…';
    const fd=new FormData();fd.append('file',file);
-   const ur=await fetch('/api/upload',{method:'POST',body:fd,signal:activeController.signal});
+   const ur=await fetch('/api/upload',{method:'POST',body:fd,signal:controller.signal});
    const ud=await ur.json().catch(()=>({}));if(!ur.ok)throw new Error(ud.error||('خطا در ارسال فایل ('+ur.status+')'));if(!ud.name)throw new Error('سرور فایل را دریافت نکرد. دوباره انتخابش کن.');
    const marker=ud.kind==='image'?'[تصویر پیوست شد: '+ud.name+']':'[فایل پیوست شد: '+ud.name+']';
    shownText=(shownText?shownText+'\n\n':'')+marker;document.getElementById('file').value='';document.getElementById('filePill').textContent='';
   }
   addMessage('user',shownText);input.value='';input.style.height='auto';
-  const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:currentChatId,messages}),signal:activeController.signal});
-  const data=await r.json();if(!r.ok)throw new Error(data.error||'خطای سرور');
+  const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:currentChatId,messages}),signal:controller.signal});
+  const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||'خطای سرور');
   currentChatId=data.chat_id||currentChatId;addMessage('assistant',data.reply||'پاسخی دریافت نشد.',{sources:data.sources||[],file_url:data.file_url||'',file_name:data.file_name||''});
   document.getElementById('modelLabel').textContent=data.model||'';
-  // History/local persistence are background tasks. They must never keep the composer locked.
-  setBusy(false);
-  loadHistory().catch(()=>{}); saveLocalState().catch(()=>{});
- }catch(e){if(e.name==='AbortError')addMessage('assistant','⏱️ پاسخ طول کشید و متوقف شد. دوباره ارسال کن.');else addMessage('assistant','❌ '+e.message)}
- finally{clearTimeout(timer);activeController=null;setBusy(false);input.focus()}
+  // مهم: قفل ارسال همین‌جا آزاد می‌شود؛ ذخیره‌سازی تاریخچه نباید ارسال پیام بعدی را متوقف کند.
+  setChatBusy(false);
+  loadHistory().catch(()=>{});saveLocalState().catch(()=>{});
+ }catch(e){
+  if(e.name==='AbortError')addMessage('assistant','⏱️ پاسخ طول کشید و متوقف شد. دوباره ارسال کن.');
+  else addMessage('assistant','❌ '+e.message);
+ }finally{clearTimeout(timer);if(chatController===controller)chatController=null;setChatBusy(false);input.focus();}
 }
 async function generateImage(){
- if(busy)return;const p=document.getElementById('imagePrompt').value.trim();if(!p){document.getElementById('status').textContent='توضیح تصویر را بنویس.';return}
- setBusy(true);document.getElementById('status').textContent='🎨 در حال ساخت تصویر…';activeController=new AbortController();const timer=setTimeout(()=>activeController&&activeController.abort(),60000);
- try{const r=await fetch('/api/generate-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p}),signal:activeController.signal});const d=await r.json();if(!r.ok)throw new Error(d.error||'ساخت تصویر ناموفق بود');messages.push({role:'assistant',content:'تصویر ساخته شد\n\nپرامپت: '+p,image_url:d.url,image_prompt:p,sources:[]});render();document.getElementById('imagePrompt').value='';toggleImagePanel();if(!currentChatId)currentChatId=crypto.randomUUID?crypto.randomUUID():String(Date.now());
-  // Release the composer immediately after the image is ready. Saving/history are non-blocking.
-  setBusy(false);
+ const p=document.getElementById('imagePrompt').value.trim();
+ if(imageBusy)return;
+ if(!p){document.getElementById('status').textContent='توضیح تصویر را بنویس.';return}
+ setImageBusy(true);document.getElementById('status').textContent='🎨 در حال ساخت تصویر…';
+ const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),60000);
+ try{
+  const r=await fetch('/api/generate-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p}),signal:controller.signal});
+  const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'ساخت تصویر ناموفق بود');
+  messages.push({role:'assistant',content:'تصویر ساخته شد\n\nپرامپت: '+p,image_url:d.url,image_prompt:p,sources:[]});render();
+  const ip=document.getElementById('imagePrompt');if(ip)ip.value='';const panel=document.getElementById('imagePanel');const genBtn=document.getElementById('imageGenBtn');if(panel)panel.classList.remove('open');if(genBtn)genBtn.classList.remove('active');
+  if(!currentChatId)currentChatId=crypto.randomUUID?crypto.randomUUID():String(Date.now());
+  // تصویر مستقل از چت است؛ بعد از آماده‌شدن تصویر، ارسال پیام متنی همچنان آزاد است.
+  setImageBusy(false);
   fetch('/api/save-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:currentChatId,messages})}).catch(()=>{});
   loadHistory().catch(()=>{});
  }catch(e){document.getElementById('status').textContent=e.name==='AbortError'?'ساخت تصویر زمان زیادی برد. دوباره امتحان کن.':'خطا در ساخت تصویر: '+e.message}
- finally{clearTimeout(timer);activeController=null;setBusy(false);input.focus()}
+ finally{clearTimeout(timer);setImageBusy(false);input.focus();}
 }
 
 async function loadHistory(){
- try{const r=await fetch('/api/chats');const d=await r.json();const h=document.getElementById('history');h.innerHTML='';
-  if(!d.chats.length){h.innerHTML='<div class="history-empty">هنوز چتی ذخیره نشده</div>';return}
+ const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),8000);
+ try{const r=await fetch('/api/chats',{cache:'no-store',signal:controller.signal});const d=await r.json().catch(()=>({chats:[]}));if(!r.ok)throw new Error(d.error||'history');const h=document.getElementById('history');h.innerHTML='';
+  if(!Array.isArray(d.chats)||!d.chats.length){h.innerHTML='<div class="history-empty">هنوز چتی ذخیره نشده</div>';return}
   d.chats.forEach(c=>{const b=document.createElement('button');b.className='history-item'+(c.id===currentChatId?' active':'');b.textContent=c.title||'چت جدید';b.onclick=()=>openChat(c.id);h.appendChild(b)})
- }catch(e){}
+ }catch(e){}finally{clearTimeout(timer)}
 }
 async function openChat(id){
  try{const r=await fetch('/api/chats/'+encodeURIComponent(id));const d=await r.json();if(!r.ok)throw new Error(d.error);currentChatId=id;messages=d.messages||[];render();document.getElementById('status').textContent='ذخیره شد';loadHistory();if(window.innerWidth<900)toggleSide();}
@@ -980,15 +1039,15 @@ def home():
 
 @app.get("/register")
 def register_page():
+    # Always allow opening the registration page directly.
+    # If an account already exists, show the login page instead of creating another account.
     if read_account():
-        return redirect(url_for("login_page"))
+        return auth_page("login")
     return auth_page("register")
 
 
 @app.post("/register")
 def register_submit():
-    if read_account():
-        return redirect(url_for("login_page"))
     username = (request.form.get("username") or "").strip()
     password = request.form.get("password") or ""
     password2 = request.form.get("password2") or ""
@@ -1008,8 +1067,8 @@ def register_submit():
 
 @app.get("/login")
 def login_page():
-    if not read_account():
-        return redirect(url_for("register_page"))
+    # Never redirect /login back to /register just because the account file
+    # is temporarily unavailable (for example after a Render restart).
     if session.get("authenticated"):
         return redirect(url_for("home"))
     return auth_page("login")
@@ -1018,9 +1077,9 @@ def login_page():
 @app.post("/login")
 def login_submit():
     account = read_account()
-    if not account:
-        return redirect(url_for("register_page"))
     password = request.form.get("password") or ""
+    if not account:
+        return auth_page("login", "حسابی روی این سرور پیدا نشد. اگر سرویس Render ری‌استارت شده، باید دوباره ثبت‌نام کنی.")
     if not check_password_hash(account.get("password_hash", ""), password):
         return auth_page("login", "رمز عبور اشتباه است.")
     session.clear()
