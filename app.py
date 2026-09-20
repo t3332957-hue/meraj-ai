@@ -804,7 +804,7 @@ textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:whit
 </main>
 </div>
 <script>
-let messages=[],chatBusy=false,imageBusy=false,currentChatId=null,mediaRecorder=null,audioChunks=[],recording=false,chatController=null;
+let messages=[],chatBusy=false,imageBusy=false,currentChatId=null,mediaRecorder=null,audioChunks=[],recording=false,chatController=null,sendQueue=Promise.resolve();
 const input=document.getElementById('input');
 
 function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -865,11 +865,16 @@ input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventD
 function toggleSide(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('overlay').classList.toggle('open')}
 function toggleMenu(){document.getElementById('menu').classList.toggle('open')}
 function toggleImagePanel(){const p=document.getElementById('imagePanel');const b=document.getElementById('imageGenBtn');if(!p||!b)return; p.classList.toggle('open');b.classList.toggle('active');if(p.classList.contains('open')){const inp=document.getElementById('imagePrompt');if(inp)inp.focus();}}
-function cancelRequest(){if(chatController){chatController.abort();document.getElementById('status').textContent='درخواست متوقف شد';}}
-function setChatBusy(v){chatBusy=v;document.getElementById('send').disabled=v;document.getElementById('mic').disabled=v;document.getElementById('cancelBtn').classList.toggle('show',v);if(!v&&!imageBusy)document.getElementById('status').textContent='آماده';}
+function cancelRequest(){if(chatController){chatController.abort();const st=document.getElementById('status');if(st)st.textContent='درخواست متوقف شد';}}
+function setChatBusy(v){chatBusy=v;const send=document.getElementById('send');const mic=document.getElementById('mic');const cancel=document.getElementById('cancelBtn');if(send)send.disabled=false;if(mic)mic.disabled=v;if(cancel)cancel.classList.toggle('show',v);if(!v&&!imageBusy)document.getElementById('status').textContent='آماده';}
 function setImageBusy(v){imageBusy=v;const panel=document.getElementById('imagePanel');if(panel){const btn=panel.querySelector('button');if(btn)btn.disabled=v;}if(!v&&!chatBusy)document.getElementById('status').textContent='آماده';}
 async function saveLocalState(){try{if(messages.length) localStorage.setItem('meraj_last_chat',JSON.stringify({id:currentChatId,messages}));}catch(e){}}
 async function sendMessage(){
+ // ارسال‌ها صف می‌شوند تا پیام دوم و سوم هم از دست نروند؛ هر درخواست بعد از قبلی اجرا می‌شود.
+ sendQueue=sendQueue.then(()=>sendMessageNow()).catch(e=>{console.error(e)});
+ return sendQueue;
+}
+async function sendMessageNow(){
  if(chatBusy)return;
  const text=input.value.trim();
  const file=document.getElementById('file').files[0];
