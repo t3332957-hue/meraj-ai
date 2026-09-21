@@ -651,8 +651,65 @@ def edit_image_file(image_path, prompt):
         raise RuntimeError("پاسخ سرویس ویرایش تصویر قابل خواندن نبود.") from e
 
 
-def generate_image_file(prompt):
-    """Generate creatively while treating the user's requested subjects as a closed set."""
+def upload_reference_to_pollinations(image_path):
+    """Upload a local reference image so Pollinations can use it as image input."""
+    if not image_path or not image_path.exists() or not is_image_file(image_path):
+        raise RuntimeError("تصویر مرجع معتبر نیست.")
+    mime = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
+    headers = {
+        "Authorization": f"Bearer {POLLINATIONS_API_KEY}",
+        "Cache-Control": "no-cache",
+    }
+    with image_path.open("rb") as fh:
+        r = requests.post(
+            "https://media.pollinations.ai/upload",
+            headers=headers,
+            files={"file": (image_path.name, fh, mime)},
+            timeout=90,
+        )
+    r.raise_for_status()
+    # Pollinations may return a JSON URL or a Link header depending on the deployment.
+    try:
+        data = r.json()
+    except ValueError:
+        data = {}
+    for key in ("url", "media_url", "link"):
+        value = data.get(key) if isinstance(data, dict) else None
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return value
+    link = r.headers.get("Link", "")
+    m = re.search(r"<([^>]+)>;\s*rel=[\"']enclosure[\"']", link)
+    if m:
+        return m.group(1)
+    if r.text.strip().startswith("http"):
+        return r.text.strip().split()[0]
+    raise RuntimeError("نتوانستم آدرس تصویر مرجع را از سرویس تصویر دریافت کنم.")
+
+
+def analyze_generated_image(local_url):
+    """Send the generated image back to Groq Vision for a short verification."""
+    if not VISION_MODEL or not isinstance(local_url, str) or not local_url.startswith("/generated/"):
+        return ""
+    filename = Path(local_url).name
+    path = GENERATED_DIR / filename
+    if not path.exists() or not is_image_file(path):
+        return ""
+    try:
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "این تصویر تازه ساخته شده است. خیلی کوتاه و دقیق بگو چه چیزهایی در آن دیده می‌شود و آیا با این درخواست هم‌خوانی دارد: " + getattr(analyze_generated_image, "_last_prompt", "")},
+                {"type": "image_url", "image_url": {"url": image_data_url(path)}},
+            ],
+        }]
+        return groq_chat(messages, use_vision=True)
+    except Exception as e:
+        print("[GENERATED IMAGE VISION ERROR]", repr(e))
+        return ""
+
+
+def generate_image_file(prompt, reference_image_path=None):
+    """Generate creatively from the user's topic, optionally using an uploaded reference image."""
     prompt = (prompt or "").strip()
     if not prompt:
         raise RuntimeError("توضیح تصویر خالی است.")
@@ -663,30 +720,20 @@ def generate_image_file(prompt):
     if len(prompt) > 4000:
         prompt = prompt[:4000]
 
-    # Balanced creativity: preserve the user's idea, while giving the image model freedom to make
-    # the composition, environment and visual storytelling substantially richer.
-    strict_prompt = (
-        "Create a polished, high-quality image from the user's request. The user's request is the "
-        "source of truth for the MAIN IDEA, requested subjects, people, objects, symbols, quantities, "
-        "colors, placement and exact text. Preserve those important requirements accurately. "
-        "At the same time, use noticeably stronger artistic creativity than a literal/basic illustration. "
-        "Think like a professional concept artist, photographer and poster designer: creatively improve "
-        "the composition, framing, camera angle, perspective, depth, scale, visual hierarchy, lighting, "
-        "shadows, reflections, atmosphere, color harmony, materials, textures, environmental storytelling "
-        "and overall cinematic quality. Build a rich and believable setting around the requested subject "
-        "when the request leaves room for it. You may add small SUPPORTING environmental details that make "
-        "the scene feel natural and complete, such as appropriate scenery, architecture, weather, clouds, "
-        "mist, particles, light rays, foreground/background layers or tasteful decorative details. "
-        "These additions must support the user's idea rather than replace or contradict it. "
-        "Do not turn a simple request into a different subject or unrelated scene. Do not add a new main "
-        "person, character, animal, vehicle, object, logo or unrelated symbol just because it looks cool. "
-        "Do not invent text. If exact text is requested, reproduce it accurately and keep extra text out. "
-        "If the user specifies a style, follow it; if no style is specified, choose an appropriate, "
-        "visually impressive style yourself. If the request is Islamic, religious, commemorative or about "
-        "a martyr, keep the presentation respectful and dignified while still using rich cinematic lighting, "
-        "strong composition and an appropriate environment. "
-        "Overall rule: be creative about HOW the requested idea is presented, not about changing WHAT the "
-        "user asked for. Make the result feel thoughtfully designed rather than generic. User request: " + prompt
+    # The user supplies the topic; the model is deliberately allowed to be creative
+    # about scene details, composition, lighting, style and supporting details.
+    # Explicit user constraints still have priority.
+    creative_prompt = (
+        "Create a rich, imaginative, polished image based on the user's requested topic. "
+        "Use strong creative judgment for composition, environment, lighting, color, camera angle, "
+        "depth, atmosphere, materials, visual storytelling and tasteful supporting details that naturally "
+        "fit the requested topic. Do not require the user to specify every detail. Expand a short idea into "
+        "a complete, visually compelling scene. However, never contradict an explicit instruction from the user, "
+        "never change requested text, and never replace the main subject or requested identity. "
+        "If a reference image is provided, use it as visual guidance and preserve the important identity, "
+        "shape, subject and distinctive features unless the user explicitly asks to change them. "
+        "Creative freedom means artistic elaboration of the requested idea, not ignoring the user's intent. "
+        "User request: " + prompt
     )
 
     # gptimage is preferred for instruction-following and text/layout work.
@@ -698,10 +745,12 @@ def generate_image_file(prompt):
         "Cache-Control": "no-cache",
         "X-Meraj-Request-ID": uuid.uuid4().hex,
     }
-    payload = {"model": image_model, "prompt": strict_prompt}
+    payload = {"model": image_model, "prompt": creative_prompt, "response_format": "b64_json", "size": "auto", "quality": "high"}
+    if reference_image_path:
+        payload["image"] = upload_reference_to_pollinations(reference_image_path)
 
     print("\n[IMAGE GEN USER PROMPT]", repr(original_prompt))
-    print("[IMAGE GEN CONTROLLED PROMPT]", repr(strict_prompt))
+    print("[IMAGE GEN CREATIVE PROMPT]", repr(creative_prompt))
     try:
         r = requests.post(
             "https://gen.pollinations.ai/v1/images/generations",
@@ -717,11 +766,11 @@ def generate_image_file(prompt):
     except ValueError as e:
         print("[IMAGE GEN POST JSON ERROR]", repr(e))
 
-    encoded_prompt = quote(strict_prompt, safe="")
+    encoded_prompt = quote(creative_prompt, safe="")
     fallback_url = "https://gen.pollinations.ai/image/" + encoded_prompt
     r = requests.get(
         fallback_url,
-        params={"model": image_model, "width": 768, "height": 768, "nologo": "true", "seed": uuid.uuid4().int % 2147483647},
+        params={"model": image_model, "nologo": "true", "seed": uuid.uuid4().int % 2147483647, **({"image": upload_reference_to_pollinations(reference_image_path)} if reference_image_path else {})},
         headers={
             "Authorization": f"Bearer {POLLINATIONS_API_KEY}",
             "Accept": "image/*",
@@ -790,7 +839,7 @@ textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:whit
 </header>
 <section class="messages" id="messages"><div class="empty"><div><h1>معراج بات</h1><p>هر چیزی می‌خواهی بنویس…</p></div></div></section>
 <div class="composer-wrap">
- <div class="image-panel" id="imagePanel"><input id="imagePrompt" placeholder="مثلاً: یک شهر آینده‌نگر در شب، سبک سینمایی"><button onclick="generateImage()">ساخت تصویر</button><button onclick="toggleImagePanel()">×</button></div> <div class="file-pill" id="filePill"></div>
+ <div class="image-panel" id="imagePanel"><input id="imagePrompt" placeholder="موضوع تصویر را بنویس؛ اگر عکس آپلود کرده‌ای، همان عکس هم به‌عنوان مرجع استفاده می‌شود"><button onclick="generateImage()">ساخت تصویر</button><button onclick="toggleImagePanel()">×</button></div> <div class="file-pill" id="filePill"></div>
  <div class="composer">
   <input id="file" class="file-input" type="file" accept="*/*" onchange="filePicked(this)">
   <button class="attach" title="ارسال فایل" onclick="document.getElementById('file').click()">📎</button>
@@ -804,7 +853,7 @@ textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:whit
 </main>
 </div>
 <script>
-let messages=[],chatBusy=false,imageBusy=false,currentChatId=null,mediaRecorder=null,audioChunks=[],recording=false,chatController=null,sendQueue=Promise.resolve();
+let messages=[],chatBusy=false,imageBusy=false,currentChatId=null,mediaRecorder=null,audioChunks=[],recording=false,chatController=null,lastUploadedImageName="";
 const input=document.getElementById('input');
 
 function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -855,26 +904,21 @@ function render(){
  }
  box.scrollTop=box.scrollHeight;
 }
-function newChat(){messages=[];currentChatId=null;render();input.value='';document.getElementById('file').value='';document.getElementById('filePill').textContent='';input.focus();document.getElementById('status').textContent='آماده';loadHistory().catch(()=>{});}
+function newChat(){messages=[];currentChatId=null;lastUploadedImageName='';render();input.value='';document.getElementById('file').value='';document.getElementById('filePill').textContent='';input.focus();document.getElementById('status').textContent='آماده';loadHistory().catch(()=>{});}
 async function clearChat(){if(!currentChatId){newChat();return;}try{await fetch('/api/chats/'+encodeURIComponent(currentChatId),{method:'DELETE'});}catch(e){}newChat();}
 function showAbout(){alert('معراج بات\nدستیار هوش مصنوعی Flask');}
-function filePicked(el){const f=el.files&&el.files[0];document.getElementById('filePill').textContent=f?'📎 '+f.name:'';}
+function filePicked(el){const f=el.files&&el.files[0];lastUploadedImageName=(f&&f.type&&f.type.startsWith('image/'))?'__pending__':'';document.getElementById('filePill').textContent=f?'📎 '+f.name:'';}
 function setBusy(v){setChatBusy(v);}
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,160)+'px'});
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
 function toggleSide(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('overlay').classList.toggle('open')}
 function toggleMenu(){document.getElementById('menu').classList.toggle('open')}
 function toggleImagePanel(){const p=document.getElementById('imagePanel');const b=document.getElementById('imageGenBtn');if(!p||!b)return; p.classList.toggle('open');b.classList.toggle('active');if(p.classList.contains('open')){const inp=document.getElementById('imagePrompt');if(inp)inp.focus();}}
-function cancelRequest(){if(chatController){chatController.abort();const st=document.getElementById('status');if(st)st.textContent='درخواست متوقف شد';}}
-function setChatBusy(v){chatBusy=v;const send=document.getElementById('send');const mic=document.getElementById('mic');const cancel=document.getElementById('cancelBtn');if(send)send.disabled=false;if(mic)mic.disabled=v;if(cancel)cancel.classList.toggle('show',v);if(!v&&!imageBusy)document.getElementById('status').textContent='آماده';}
+function cancelRequest(){if(chatController){chatController.abort();document.getElementById('status').textContent='درخواست متوقف شد';}}
+function setChatBusy(v){chatBusy=v;document.getElementById('send').disabled=v;document.getElementById('mic').disabled=v;document.getElementById('cancelBtn').classList.toggle('show',v);if(!v&&!imageBusy)document.getElementById('status').textContent='آماده';}
 function setImageBusy(v){imageBusy=v;const panel=document.getElementById('imagePanel');if(panel){const btn=panel.querySelector('button');if(btn)btn.disabled=v;}if(!v&&!chatBusy)document.getElementById('status').textContent='آماده';}
 async function saveLocalState(){try{if(messages.length) localStorage.setItem('meraj_last_chat',JSON.stringify({id:currentChatId,messages}));}catch(e){}}
 async function sendMessage(){
- // ارسال‌ها صف می‌شوند تا پیام دوم و سوم هم از دست نروند؛ هر درخواست بعد از قبلی اجرا می‌شود.
- sendQueue=sendQueue.then(()=>sendMessageNow()).catch(e=>{console.error(e)});
- return sendQueue;
-}
-async function sendMessageNow(){
  if(chatBusy)return;
  const text=input.value.trim();
  const file=document.getElementById('file').files[0];
@@ -890,7 +934,7 @@ async function sendMessageNow(){
    const fd=new FormData();fd.append('file',file);
    const ur=await fetch('/api/upload',{method:'POST',body:fd,signal:controller.signal});
    const ud=await ur.json().catch(()=>({}));if(!ur.ok)throw new Error(ud.error||('خطا در ارسال فایل ('+ur.status+')'));if(!ud.name)throw new Error('سرور فایل را دریافت نکرد. دوباره انتخابش کن.');
-   const marker=ud.kind==='image'?'[تصویر پیوست شد: '+ud.name+']':'[فایل پیوست شد: '+ud.name+']';
+   const marker=ud.kind==='image'?'[تصویر پیوست شد: '+ud.name+']':'[فایل پیوست شد: '+ud.name+']'; if(ud.kind==='image')lastUploadedImageName=ud.name;
    shownText=(shownText?shownText+'\n\n':'')+marker;document.getElementById('file').value='';document.getElementById('filePill').textContent='';
   }
   addMessage('user',shownText);input.value='';input.style.height='auto';
@@ -913,9 +957,9 @@ async function generateImage(){
  setImageBusy(true);document.getElementById('status').textContent='🎨 در حال ساخت تصویر…';
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),60000);
  try{
-  const r=await fetch('/api/generate-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p}),signal:controller.signal});
+  const r=await fetch('/api/generate-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p,image_name:lastUploadedImageName||''}),signal:controller.signal});
   const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'ساخت تصویر ناموفق بود');
-  messages.push({role:'assistant',content:'تصویر ساخته شد\n\nپرامپت: '+p,image_url:d.url,image_prompt:p,sources:[]});render();
+  messages.push({role:'assistant',content:'تصویر ساخته شد\n\nپرامپت: '+p+(d.vision_analysis?'\n\n🔎 بررسی Groq Vision:\n'+d.vision_analysis:''),image_url:d.url,image_prompt:p,sources:[]});render();
   const ip=document.getElementById('imagePrompt');if(ip)ip.value='';const panel=document.getElementById('imagePanel');const genBtn=document.getElementById('imageGenBtn');if(panel)panel.classList.remove('open');if(genBtn)genBtn.classList.remove('active');
   if(!currentChatId)currentChatId=crypto.randomUUID?crypto.randomUUID():String(Date.now());
   // تصویر مستقل از چت است؛ بعد از آماده‌شدن تصویر، ارسال پیام متنی همچنان آزاد است.
@@ -1253,11 +1297,17 @@ def generated_download_file(filename):
 def generate_image():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
+    image_name = Path(str(data.get("image_name") or "")).name
+    reference_path = UPLOAD_DIR / image_name if image_name else None
     if not prompt:
         return jsonify(error="توضیح تصویر را بنویس."), 400
+    if reference_path and (not reference_path.exists() or not is_image_file(reference_path)):
+        reference_path = None
     try:
-        image_url = generate_image_file(prompt)
-        return jsonify(ok=True, url=image_url, provider=IMAGE_GEN_PROVIDER)
+        image_url = generate_image_file(prompt, reference_path)
+        analyze_generated_image._last_prompt = prompt
+        analysis = analyze_generated_image(image_url)
+        return jsonify(ok=True, url=image_url, provider=IMAGE_GEN_PROVIDER, vision_analysis=analysis)
     except requests.HTTPError as e:
         detail = getattr(e.response, "text", "")[:500] if getattr(e, "response", None) is not None else str(e)
         print("\n[IMAGE GEN HTTP ERROR]", detail)
