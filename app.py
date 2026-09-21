@@ -745,7 +745,7 @@ def generate_image_file(prompt, reference_image_path=None):
         "Cache-Control": "no-cache",
         "X-Meraj-Request-ID": uuid.uuid4().hex,
     }
-    payload = {"model": image_model, "prompt": creative_prompt, "response_format": "b64_json", "size": "auto", "quality": "high"}
+    payload = {"model": image_model, "prompt": creative_prompt, "response_format": "b64_json", "size": "1024x1024", "quality": "high"}
     if reference_image_path:
         payload["image"] = upload_reference_to_pollinations(reference_image_path)
 
@@ -768,9 +768,18 @@ def generate_image_file(prompt, reference_image_path=None):
 
     encoded_prompt = quote(creative_prompt, safe="")
     fallback_url = "https://gen.pollinations.ai/image/" + encoded_prompt
+    fallback_params = {
+        "model": image_model,
+        "width": 1024,
+        "height": 1024,
+        "nologo": "true",
+        "seed": uuid.uuid4().int % 2147483647,
+    }
+    if reference_image_path:
+        fallback_params["image"] = upload_reference_to_pollinations(reference_image_path)
     r = requests.get(
         fallback_url,
-        params={"model": image_model, "nologo": "true", "seed": uuid.uuid4().int % 2147483647, **({"image": upload_reference_to_pollinations(reference_image_path)} if reference_image_path else {})},
+        params=fallback_params,
         headers={
             "Authorization": f"Bearer {POLLINATIONS_API_KEY}",
             "Accept": "image/*",
