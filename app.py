@@ -603,13 +603,15 @@ def generate_image_file(prompt):
     print("[IMAGE GEN CONTROLLED PROMPT]", repr(creative_prompt))
 
     # 1) Use Pollinations' simple native image endpoint first.
-    # No width/height are supplied here, so the provider chooses its default size.
+    # Keep a fixed 768x768 output for reliable generation on Render.
     try:
         encoded_prompt = quote(creative_prompt, safe="")
         r = requests.get(
             "https://gen.pollinations.ai/image/" + encoded_prompt,
             params={
                 "model": image_model,
+                "width": 768,
+                "height": 768,
                 "nologo": "true",
                 "seed": uuid.uuid4().int % 2147483647,
             },
@@ -629,7 +631,7 @@ def generate_image_file(prompt):
     payload = {
         "model": image_model,
         "prompt": creative_prompt,
-        "size": "1024x1024",
+        "size": "768x768",
         "n": 1,
         "response_format": "b64_json",
     }
