@@ -745,50 +745,12 @@ def generate_image_file(prompt, reference_image_path=None):
         "Cache-Control": "no-cache",
         "X-Meraj-Request-ID": uuid.uuid4().hex,
     }
-    print("\n[IMAGE GEN USER PROMPT]", repr(original_prompt))
-    print("[IMAGE GEN CREATIVE PROMPT]", repr(creative_prompt))
-
-    # Do not force or manipulate the image dimensions. Pollinations chooses
-    # the provider/default size automatically. This keeps the user's image
-    # generation free from hard-coded width/height/size values.
-    encoded_prompt = quote(creative_prompt, safe="")
-    image_url = "https://gen.pollinations.ai/image/" + encoded_prompt
-    image_params = {
-        "model": image_model,
-        "nologo": "true",
-        "seed": uuid.uuid4().int % 2147483647,
-    }
-    if reference_image_path:
-        image_params["image"] = upload_reference_to_pollinations(reference_image_path)
-
-    try:
-        r = requests.get(
-            image_url,
-            params=image_params,
-            headers={
-                "Authorization": f"Bearer {POLLINATIONS_API_KEY}",
-                "Accept": "image/*",
-                "Cache-Control": "no-cache",
-                "X-Meraj-Request-ID": uuid.uuid4().hex,
-            },
-            timeout=180,
-        )
-        if r.ok and r.content:
-            return _save_generated_bytes(r.content, r.headers.get("Content-Type"))
-        print("[IMAGE GEN GET ERROR]", r.status_code, r.text[:800])
-    except requests.RequestException as e:
-        print("[IMAGE GEN GET CONNECTION ERROR]", repr(e))
-
-    # Secondary API route. No fixed size is supplied here either; the provider
-    # decides the dimensions.
-    payload = {
-        "model": image_model,
-        "prompt": creative_prompt,
-        "response_format": "b64_json",
-        "quality": "high",
-    }
+    payload = {"model": image_model, "prompt": creative_prompt, "response_format": "b64_json"}
     if reference_image_path:
         payload["image"] = upload_reference_to_pollinations(reference_image_path)
+
+    print("\n[IMAGE GEN USER PROMPT]", repr(original_prompt))
+    print("[IMAGE GEN CREATIVE PROMPT]", repr(creative_prompt))
     try:
         r = requests.post(
             "https://gen.pollinations.ai/v1/images/generations",
@@ -804,7 +766,21 @@ def generate_image_file(prompt, reference_image_path=None):
     except ValueError as e:
         print("[IMAGE GEN POST JSON ERROR]", repr(e))
 
-    raise RuntimeError("Pollinations تصویر را تولید نکرد. جزئیات را در Render Logs ببین.")
+    encoded_prompt = quote(creative_prompt, safe="")
+    fallback_url = "https://gen.pollinations.ai/image/" + encoded_prompt
+    r = requests.get(
+        fallback_url,
+        params={"model": image_model, "width": 768, "height": 768, "nologo": "true", "seed": uuid.uuid4().int % 2147483647, **({"image": upload_reference_to_pollinations(reference_image_path)} if reference_image_path else {})},
+        headers={
+            "Authorization": f"Bearer {POLLINATIONS_API_KEY}",
+            "Accept": "image/*",
+            "Cache-Control": "no-cache",
+            "X-Meraj-Request-ID": uuid.uuid4().hex,
+        },
+        timeout=180,
+    )
+    r.raise_for_status()
+    return _save_generated_bytes(r.content, r.headers.get("Content-Type"))
 
 
 HTML_PAGE = r'''<!doctype html>
