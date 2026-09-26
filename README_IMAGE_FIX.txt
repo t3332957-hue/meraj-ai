@@ -1,4 +1,4 @@
-MerajBot v28 image generation fix
+Taha's Helper Bot v28 image generation fix
 
 - Uses current Pollinations native GET image endpoint first.
 - Does not force width/height on the primary request.

@@ -69,7 +69,7 @@ def choose_model(models):
 def setup():
     global API_KEY, MODEL, VISION_MODEL, TRANSCRIBE_MODEL, POLLINATIONS_API_KEY
     print("\n" + "=" * 56)
-    print("                    معراج بات")
+    print("                    Taha's Helper Bot")
     print("=" * 56)
 
     # On hosting platforms such as Render, secrets are supplied as
@@ -203,7 +203,7 @@ def build_file_context(path):
     if ext == ".pdf":
         return (
             f"\n\n--- فایل پیوست: {path.name} ---\n"
-            "این فایل PDF است. نسخهٔ فعلی معراج بات استخراج مستقیم متن PDF را بدون PyMuPDF انجام نمی‌دهد؛ "
+            "این فایل PDF است. نسخهٔ فعلی Taha's Helper Bot استخراج مستقیم متن PDF را بدون PyMuPDF انجام نمی‌دهد؛ "
             "اگر متن PDF را به TXT تبدیل کنی، می‌توانم محتوایش را تحلیل کنم.\n--- پایان فایل ---"
         )
     return (
@@ -661,7 +661,7 @@ HTML_PAGE = r'''<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>معراج بات</title>
+<title>Taha's Helper Bot</title>
 <style>
 *{box-sizing:border-box}
 :root{--bg:#0b0b0f;--line:#2a2a33;--text:#f4f4f5;--muted:#a1a1aa;--bubble:#202024;--accent:#fff}
@@ -706,11 +706,11 @@ textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:whit
 <div class="overlay" id="overlay" onclick="toggleSide()"></div>
 <main class="main">
 <header class="topbar">
- <div class="top-right"><button class="iconbtn" onclick="toggleSide()">☰</button><div><div class="brand">معراج بات</div><div class="model" id="modelLabel">در حال اتصال...</div></div></div>
+ <div class="top-right"><button class="iconbtn" onclick="toggleSide()">☰</button><div><div class="brand">Taha's Helper Bot</div><div class="model" id="modelLabel">در حال اتصال...</div></div></div>
  <div class="top-left"><button class="iconbtn" onclick="newChat()">✎</button><button class="iconbtn" onclick="toggleMenu()">⋮</button></div>
  <div class="menu" id="menu"><button onclick="newChat();toggleMenu()">چت جدید</button><button onclick="clearChat();toggleMenu()">پاک کردن این چت</button><button onclick="showAbout();toggleMenu()">درباره</button><button onclick="alert('جستجوی وب برای پرسش‌های خبری و به‌روز به‌صورت خودکار فعال است.')">🌐 جستجوی وب</button></div>
 </header>
-<section class="messages" id="messages"><div class="empty"><div><h1>معراج بات</h1><p>هر چیزی می‌خواهی بنویس…</p></div></div></section>
+<section class="messages" id="messages"><div class="empty"><div><h1>Taha's Helper Bot</h1><p>هر چیزی می‌خواهی بنویس…</p></div></div></section>
 <div class="composer-wrap">
  <div class="image-panel" id="imagePanel"><input id="imagePrompt" placeholder="مثلاً: یک شهر آینده‌نگر در شب، سبک سینمایی"><button onclick="generateImage()">ساخت تصویر</button><button onclick="toggleImagePanel()">×</button></div> <div class="file-pill" id="filePill"></div>
  <div class="composer">
@@ -736,7 +736,7 @@ function toggleImagePanel(){const p=document.getElementById('imagePanel');const 
 function cancelRequest(){if(activeController){activeController.abort();document.getElementById('status').textContent='درخواست متوقف شد';}}
 function newChat(){messages=[];currentChatId=null;render();input.value='';document.getElementById('file').value='';document.getElementById('filePill').textContent='';input.focus();document.getElementById('status').textContent='چت جدید';loadHistory()}
 function clearChat(){if(!currentChatId){newChat();return} fetch('/api/chats/'+currentChatId,{method:'DELETE'}).finally(()=>newChat())}
-function showAbout(){alert('معراج بات\nچت، تاریخچه دائمی، فایل و تبدیل صدا به متن')}
+function showAbout(){alert('Taha's Helper Bot\nچت، تاریخچه دائمی، فایل و تبدیل صدا به متن')}
 function filePicked(el){if(el.files.length){document.getElementById('filePill').textContent='📎 '+el.files[0].name;document.getElementById('status').textContent='فایل آماده ارسال است'}}
 function addMessage(role,text,extra={}){messages.push({role,content:text,...extra});render()}
 function escapeHtml(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;')}
@@ -754,11 +754,17 @@ function renderRichText(text,bubble){
  const after=raw.slice(last);if(after){const div=document.createElement('div');div.innerHTML=escapeHtml(after).replace(/\n/g,'<br>');bubble.appendChild(div)}
 }
 function copyCodeBlock(code,btn){const done=()=>{const old=btn.textContent;btn.textContent='کپی شد ✓';setTimeout(()=>btn.textContent=old,1200)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(code).then(done).catch(()=>{fallbackCopy(code);done()})}else{fallbackCopy(code);done()}}
-function render(){const box=document.getElementById('messages');if(!messages.length){box.innerHTML='<div class="empty"><div><h1>معراج بات</h1><p>هر چیزی می‌خواهی بنویس…</p></div></div>';return}box.innerHTML='';messages.forEach((m,idx)=>{const row=document.createElement('div');row.className='msg '+m.role;row.innerHTML='<div class="avatar">'+(m.role==='user'?'شما':'م')+'</div><div class="bubble"></div>';const bubble=row.querySelector('.bubble');renderRichText(m.content,bubble);if(m.image_url){const img=document.createElement('img');img.className='generated-image';img.src=m.image_url;img.alt='تصویر';img.loading='lazy';bubble.appendChild(img);const tools=document.createElement('div');tools.className='image-tools';const dl=document.createElement('a');dl.className='msg-action image-download';dl.textContent='⬇️ دانلود تصویر';let downloadUrl=m.image_url;if(typeof downloadUrl==='string'&&downloadUrl.startsWith('/generated/'))downloadUrl='/generated-download/'+downloadUrl.substring('/generated/'.length);dl.href=downloadUrl;dl.setAttribute('download','meraj-image.png');tools.appendChild(dl);bubble.appendChild(tools);const cap=document.createElement('div');cap.className='image-caption';cap.textContent='تصویر آماده است';bubble.appendChild(cap)}if(m.file_url){const tools=document.createElement('div');tools.className='file-tools';const dl=document.createElement('a');dl.className='msg-action file-download';dl.textContent='📁 دریافت فایل'+(m.file_name?' — '+m.file_name:'');dl.href=m.file_url;dl.setAttribute('download',m.file_name||'meraj-file');tools.appendChild(dl);bubble.appendChild(tools)}if(m.role==='assistant'){const actions=document.createElement('div');actions.className='msg-actions';actions.innerHTML='<button class="msg-action" onclick="copyMsg('+idx+',this)">کپی</button><button class="msg-action" onclick="shareMsg('+idx+')">اشتراک‌گذاری</button>';bubble.appendChild(actions);if(Array.isArray(m.sources)&&m.sources.length){const web=document.createElement('div');web.className='sources';web.innerHTML='<div class="web-badge">🌐 منابع وب</div><div class="sources-title">منابع استفاده‌شده:</div>';m.sources.forEach((src,i)=>{const a=document.createElement('a');a.className='source-link';a.href=src.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='['+(i+1)+'] '+src.title;web.appendChild(a)});bubble.appendChild(web)}}box.appendChild(row)});box.scrollTop=box.scrollHeight}
+function render(){const box=document.getElementById('messages');if(!messages.length){box.innerHTML='<div class="empty"><div><h1>Taha's Helper Bot</h1><p>هر چیزی می‌خواهی بنویس…</p></div></div>';return}box.innerHTML='';messages.forEach((m,idx)=>{const row=document.createElement('div');row.className='msg '+m.role;row.innerHTML='<div class="avatar">'+(m.role==='user'?'شما':'م')+'</div><div class="bubble"></div>';const bubble=row.querySelector('.bubble');renderRichText(m.content,bubble);if(m.image_url){const img=document.createElement('img');img.className='generated-image';img.src=m.image_url;img.alt='تصویر';img.loading='lazy';bubble.appendChild(img);const tools=document.createElement('div');tools.className='image-tools';const dl=document.createElement('a');dl.className='msg-action image-download';dl.textContent='⬇️ دانلود تصویر';let downloadUrl=m.image_url;if(typeof downloadUrl==='string'&&downloadUrl.startsWith('/generated/'))downloadUrl='/generated-download/'+downloadUrl.substring('/generated/'.length);dl.href=downloadUrl;dl.setAttribute('download','meraj-image.png');tools.appendChild(dl);bubble.appendChild(tools);const cap=document.createElement('div');cap.className='image-caption';cap.textContent='تصویر آماده است';bubble.appendChild(cap)}if(m.file_url){const tools=document.createElement('div');tools.className='file-tools';const dl=document.createElement('a');dl.className='msg-action file-download';dl.textContent='📁 دریافت فایل'+(m.file_name?' — '+m.file_name:'');dl.href=m.file_url;dl.setAttribute('download',m.file_name||'meraj-file');tools.appendChild(dl);bubble.appendChild(tools)}if(m.role==='assistant'){const actions=document.createElement('div');actions.className='msg-actions';actions.innerHTML='<button class="msg-action" onclick="copyMsg('+idx+',this)">کپی</button><button class="msg-action" onclick="shareMsg('+idx+')">اشتراک‌گذاری</button>';bubble.appendChild(actions);if(Array.isArray(m.sources)&&m.sources.length){const web=document.createElement('div');web.className='sources';web.innerHTML='<div class="web-badge">🌐 منابع وب</div><div class="sources-title">منابع استفاده‌شده:</div>';m.sources.forEach((src,i)=>{const a=document.createElement('a');a.className='source-link';a.href=src.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='['+(i+1)+'] '+src.title;web.appendChild(a)});bubble.appendChild(web)}}box.appendChild(row)});box.scrollTop=box.scrollHeight}
 function copyMsg(i,btn){const text=messages[i]?.content||'';const done=()=>{if(btn){const old=btn.textContent;btn.textContent='کپی شد ✓';setTimeout(()=>btn.textContent=old,1200)}};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done).catch(()=>{fallbackCopy(text);done()})}else{fallbackCopy(text);done()}}
 function fallbackCopy(text){const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}
-async function shareMsg(i){const text=messages[i]?.content||'';if(navigator.share){try{await navigator.share({title:'معراج بات',text:text});return}catch(e){}}fallbackCopy(text);alert('متن پاسخ کپی شد؛ حالا می‌توانی آن را در هر برنامه‌ای به اشتراک بگذاری.')}
-function setBusy(v){busy=v;document.getElementById('send').disabled=v;document.getElementById('mic').disabled=v;document.getElementById('cancelBtn').classList.toggle('show',v);if(!v)document.getElementById('status').textContent='آماده';}
+async function shareMsg(i){const text=messages[i]?.content||'';if(navigator.share){try{await navigator.share({title:'Taha's Helper Bot',text:text});return}catch(e){}}fallbackCopy(text);alert('متن پاسخ کپی شد؛ حالا می‌توانی آن را در هر برنامه‌ای به اشتراک بگذاری.')}
+function setBusy(v){
+ busy=v;
+ const sendBtn=document.getElementById('send'); if(sendBtn)sendBtn.disabled=v;
+ const micBtn=document.getElementById('mic'); if(micBtn)micBtn.disabled=v;
+ const cancelBtn=document.getElementById('cancelBtn'); if(cancelBtn)cancelBtn.classList.toggle('show',v);
+ const status=document.getElementById('status'); if(status&&!v)status.textContent='آماده';
+}
 async function saveLocalState(){try{if(messages.length) localStorage.setItem('meraj_last_chat',JSON.stringify({id:currentChatId,messages}));}catch(e){}}
 async function sendMessage(){
  if(busy)return;

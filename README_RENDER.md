@@ -1,4 +1,4 @@
-# معراج بات — آماده استقرار روی Render
+# Taha's Helper Bot — آماده استقرار روی Render
 
 ## تنظیمات Render
 - Runtime: Python 3
